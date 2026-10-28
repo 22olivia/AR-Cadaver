@@ -4,44 +4,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AR Cadaver Visualization</title>
 
-  <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-      font-family: Arial, sans-serif;
-      background: #111;
-    }
+  <title>AR Cadaver Visualization System</title>
 
-    #instructions {
-      position: fixed;
-      top: 12px;
-      left: 10px;
-      right: 10px;
-      z-index: 5;
-      color: white;
-      background: rgba(0, 0, 0, 0.65);
-      padding: 12px;
-      border-radius: 10px;
-      text-align: center;
-      font-size: 14px;
-      pointer-events: none;
-    }
-
-    #status {
-      position: fixed;
-      bottom: 75px;
-      left: 10px;
-      right: 10px;
-      z-index: 5;
-      color: white;
-      text-align: center;
-      font-size: 14px;
-      pointer-events: none;
-    }
-  </style>
-
+  <!-- Import Three.js and its 3D model loader -->
   <script type="importmap">
     {
       "imports": {
@@ -50,119 +16,360 @@
       }
     }
   </script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #111;
+      font-family: Arial, sans-serif;
+    }
+
+    #instructions {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 5;
+      padding: 14px;
+      border-radius: 12px;
+      color: white;
+      background: rgba(15, 23, 42, 0.85);
+      text-align: center;
+      font-size: 14px;
+      line-height: 1.5;
+      pointer-events: none;
+    }
+
+    #status {
+      position: fixed;
+      bottom: 82px;
+      left: 12px;
+      right: 12px;
+      z-index: 5;
+      padding: 10px;
+      border-radius: 8px;
+      color: white;
+      background: rgba(15, 23, 42, 0.8);
+      text-align: center;
+      font-size: 13px;
+      pointer-events: none;
+    }
+
+    #resetButton {
+      position: fixed;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 20px;
+      color: white;
+      background: #2563eb;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
 </head>
 
 <body>
   <div id="instructions">
-    AR Cadaver Visualization<br>
-    Move your phone slowly to find a surface.
-    Tap to place the object.
+    <strong>AR Cadaver Visualization</strong><br>
+    Move your phone slowly to scan the table or floor.<br>
+    When the green ring appears, tap the screen to place
+    the anatomical model.
   </div>
 
-  <div id="status">Press START AR to begin.</div>
+  <div id="status">Loading the 3D model...</div>
+
+  <button id="resetButton" type="button">
+    Reset Model
+  </button>
 
   <script type="module">
     import * as THREE from 'three';
     import { ARButton } from 'three/addons/webxr/ARButton.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
     const status = document.getElementById('status');
+    const resetButton = document.getElementById('resetButton');
 
-    // Create the 3D scene.
+    // --------------------------------------------------
+    // 1. CREATE THE 3D SCENE
+    // --------------------------------------------------
+
     const scene = new THREE.Scene();
 
-    // Set up the camera.
     const camera = new THREE.PerspectiveCamera(
       70,
       window.innerWidth / window.innerHeight,
       0.01,
-      20
+      30
     );
 
-    // Create the renderer.
     const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true
+      alpha: true,
+      antialias: true
     });
 
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio, 2)
+    );
+
+    renderer.setSize(
+      window.innerWidth,
+      window.innerHeight
+    );
+
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.xr.enabled = true;
 
     document.body.appendChild(renderer.domElement);
 
-    // Add light so the 3D object is visible.
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 2));
+    // --------------------------------------------------
+    // 2. LIGHTING
+    // --------------------------------------------------
 
-    const light = new THREE.DirectionalLight(0xffffff, 2);
-    light.position.set(1, 3, 2);
-    scene.add(light);
-
-    // Create a green ring showing where a surface was detected.
-    const reticle = new THREE.Mesh(
-      new THREE.RingGeometry(0.08, 0.12, 32),
-      new THREE.MeshBasicMaterial({ color: 0x00ff66 })
+    const ambientLight = new THREE.HemisphereLight(
+      0xffffff,
+      0x777777,
+      2
     );
 
+    scene.add(ambientLight);
+
+    const mainLight = new THREE.DirectionalLight(
+      0xffffff,
+      2
+    );
+
+    mainLight.position.set(1, 3, 2);
+    scene.add(mainLight);
+
+    // --------------------------------------------------
+    // 3. GREEN SURFACE PLACEMENT INDICATOR
+    // --------------------------------------------------
+
+    const reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.08, 0.12, 40),
+      new THREE.MeshBasicMaterial({
+        color: 0x00ff66,
+        side: THREE.DoubleSide
+      })
+    );
+
+    // Make the ring horizontal.
     reticle.rotation.x = -Math.PI / 2;
     reticle.matrixAutoUpdate = false;
     reticle.visible = false;
+
     scene.add(reticle);
 
-    // Create a temporary cube to test placement.
-    const cube = new THREE.Mesh(
-      new THREE.BoxGeometry(0.15, 0.15, 0.15),
-      new THREE.MeshStandardMaterial({ color: 0xe8b923 })
-    );
+    // --------------------------------------------------
+    // 4. CREATE A CONTAINER FOR THE ANATOMICAL MODEL
+    // --------------------------------------------------
 
-    cube.visible = false;
-    scene.add(cube);
+    const modelGroup = new THREE.Group();
 
+    modelGroup.visible = false;
+    scene.add(modelGroup);
+
+    let cadaverLoaded = false;
     let hitTestSource = null;
     let hitTestRequested = false;
     let surfaceFound = false;
 
-    // Start an AR session with real-world hit testing.
-    document.body.appendChild(
-      ARButton.createButton(renderer, {
-        requiredFeatures: ['hit-test'],
-        optionalFeatures: ['dom-overlay'],
-        domOverlay: { root: document.body }
-      })
-    );
+    // --------------------------------------------------
+    // 5. LOAD THE GLB MODEL
+    // --------------------------------------------------
 
-    renderer.xr.addEventListener('sessionstart', () => {
-      status.textContent = 'Move your phone slowly to find a surface.';
-      hitTestSource = null;
-      hitTestRequested = false;
-      surfaceFound = false;
-    });
+    const loader = new GLTFLoader();
 
-    renderer.xr.addEventListener('sessionend', () => {
-      status.textContent = 'AR ended. Press START AR to try again.';
-      reticle.visible = false;
-      hitTestSource = null;
-      hitTestRequested = false;
-    });
+    loader.load(
+      './models/cadaver.glb',
 
-    // Tapping the screen places the cube at the detected surface.
-    renderer.xr.addEventListener('sessionstart', () => {
-      const session = renderer.xr.getSession();
+      (gltf) => {
+        const cadaver = gltf.scene;
 
-      session.addEventListener('select', () => {
-        if (!reticle.visible) {
-          status.textContent = 'No surface found yet. Move the phone slowly.';
+        // Try to position the anatomical torso horizontally.
+        // The correct orientation depends on the downloaded model.
+        cadaver.rotation.x = Math.PI / 2;
+
+        cadaver.updateMatrixWorld(true);
+
+        // Find the model's dimensions.
+        const originalBounds = new THREE.Box3()
+          .setFromObject(cadaver);
+
+        const originalSize = new THREE.Vector3();
+
+        originalBounds.getSize(originalSize);
+
+        const largestDimension = Math.max(
+          originalSize.x,
+          originalSize.y,
+          originalSize.z
+        );
+
+        if (largestDimension === 0) {
+          status.textContent = 'The 3D model has invalid dimensions.';
           return;
         }
 
-        cube.position.setFromMatrixPosition(reticle.matrix);
-        cube.quaternion.setFromRotationMatrix(reticle.matrix);
-        cube.visible = true;
+        // Set the longest dimension to approximately 70 cm.
+        // Change 0.7 later if you want a different size.
+        const targetLength = 0.7;
+        const scaleFactor = targetLength / largestDimension;
 
-        status.textContent = 'Object placed! Tap another surface to move it.';
+        cadaver.scale.multiplyScalar(scaleFactor);
+        cadaver.updateMatrixWorld(true);
+
+        // Recalculate bounds after scaling and rotation.
+        const bounds = new THREE.Box3()
+          .setFromObject(cadaver);
+
+        const center = new THREE.Vector3();
+        bounds.getCenter(center);
+
+        // Center the model horizontally and put its
+        // lowest point at the local floor level.
+        cadaver.position.x -= center.x;
+        cadaver.position.z -= center.z;
+        cadaver.position.y -= bounds.min.y;
+
+        modelGroup.add(cadaver);
+
+        cadaverLoaded = true;
+
+        status.textContent =
+          'Model ready! Press START AR and scan a surface.';
+      },
+
+      (progress) => {
+        if (progress.total > 0) {
+          const percent = Math.round(
+            (progress.loaded / progress.total) * 100
+          );
+
+          status.textContent =
+            'Loading anatomical model: ' + percent + '%';
+        } else {
+          status.textContent =
+            'Downloading anatomical model...';
+        }
+      },
+
+      (error) => {
+        console.error('Model loading error:', error);
+
+        status.textContent =
+          'Model failed to load. Check models/cadaver.glb.';
+      }
+    );
+
+    // --------------------------------------------------
+    // 6. START THE MARKERLESS AR SESSION
+    // --------------------------------------------------
+
+    const arButton = ARButton.createButton(renderer, {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: {
+        root: document.body
+      }
+    });
+
+    document.body.appendChild(arButton);
+
+    // --------------------------------------------------
+    // 7. PREPARE SURFACE DETECTION
+    // --------------------------------------------------
+
+    renderer.xr.addEventListener('sessionstart', () => {
+      hitTestSource = null;
+      hitTestRequested = false;
+      surfaceFound = false;
+
+      reticle.visible = false;
+
+      status.textContent = cadaverLoaded
+        ? 'Move your phone slowly to find a surface.'
+        : 'AR started. Waiting for the model to load...';
+
+      const session = renderer.xr.getSession();
+
+      session.addEventListener('select', () => {
+        // Do not place the model until a surface is detected.
+        if (!reticle.visible) {
+          status.textContent =
+            'No surface found. Move your phone slowly.';
+          return;
+        }
+
+        if (!cadaverLoaded) {
+          status.textContent =
+            'Please wait for the model to finish loading.';
+          return;
+        }
+
+        // Place the model at the detected surface.
+        modelGroup.position.setFromMatrixPosition(
+          reticle.matrix
+        );
+
+        modelGroup.quaternion.setFromRotationMatrix(
+          reticle.matrix
+        );
+
+        modelGroup.visible = true;
+
+        status.textContent =
+          'Model placed! Tap another surface to move it.';
       });
     });
 
-    // Update the surface indicator every frame.
+    // --------------------------------------------------
+    // 8. CLEAN UP WHEN AR ENDS
+    // --------------------------------------------------
+
+    renderer.xr.addEventListener('sessionend', () => {
+      reticle.visible = false;
+
+      hitTestSource = null;
+      hitTestRequested = false;
+      surfaceFound = false;
+
+      status.textContent =
+        'AR ended. Press START AR to begin again.';
+    });
+
+    // --------------------------------------------------
+    // 9. RESET THE MODEL
+    // --------------------------------------------------
+
+    resetButton.addEventListener('click', () => {
+      modelGroup.visible = false;
+
+      status.textContent = cadaverLoaded
+        ? 'Model reset. Find a surface and tap to place it.'
+        : 'The model is still loading.';
+    });
+
+    // --------------------------------------------------
+    // 10. UPDATE SURFACE DETECTION EVERY FRAME
+    // --------------------------------------------------
+
     renderer.setAnimationLoop((timestamp, frame) => {
       if (frame) {
         const session = renderer.xr.getSession();
@@ -180,28 +387,47 @@
               hitTestSource = source;
             })
             .catch((error) => {
-              status.textContent = 'Hit testing failed: ' + error.message;
+              console.error('Hit test error:', error);
+
+              status.textContent =
+                'Surface detection failed. Check AR support.';
             });
         }
 
         if (hitTestSource) {
-          const referenceSpace = renderer.xr.getReferenceSpace();
-          const results = frame.getHitTestResults(hitTestSource);
+          const referenceSpace =
+            renderer.xr.getReferenceSpace();
+
+          const results = frame.getHitTestResults(
+            hitTestSource
+          );
 
           if (results.length > 0) {
             const pose = results[0].getPose(referenceSpace);
 
-            reticle.visible = true;
-            reticle.matrix.fromArray(pose.transform.matrix);
+            if (pose) {
+              reticle.visible = true;
 
-            if (!surfaceFound) {
-              status.textContent = 'Surface found! Tap to place the object.';
-              surfaceFound = true;
+              reticle.matrix.fromArray(
+                pose.transform.matrix
+              );
+
+              if (!surfaceFound) {
+                status.textContent = cadaverLoaded
+                  ? 'Surface found! Tap to place the model.'
+                  : 'Surface found! Waiting for model...';
+
+                surfaceFound = true;
+              }
             }
           } else {
             reticle.visible = false;
             surfaceFound = false;
-            status.textContent = 'Move your phone slowly to find a surface.';
+
+            if (cadaverLoaded) {
+              status.textContent =
+                'Move your phone slowly to find a surface.';
+            }
           }
         }
       }
@@ -209,11 +435,20 @@
       renderer.render(scene, camera);
     });
 
-    // Keep the display fitted to the browser window.
+    // --------------------------------------------------
+    // 11. HANDLE WINDOW RESIZING
+    // --------------------------------------------------
+
     window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.aspect =
+        window.innerWidth / window.innerHeight;
+
       camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      renderer.setSize(
+        window.innerWidth,
+        window.innerHeight
+      );
     });
   </script>
 </body>

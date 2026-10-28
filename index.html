@@ -1,0 +1,220 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AR Cadaver Visualization</title>
+
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      background: #111;
+    }
+
+    #instructions {
+      position: fixed;
+      top: 12px;
+      left: 10px;
+      right: 10px;
+      z-index: 5;
+      color: white;
+      background: rgba(0, 0, 0, 0.65);
+      padding: 12px;
+      border-radius: 10px;
+      text-align: center;
+      font-size: 14px;
+      pointer-events: none;
+    }
+
+    #status {
+      position: fixed;
+      bottom: 75px;
+      left: 10px;
+      right: 10px;
+      z-index: 5;
+      color: white;
+      text-align: center;
+      font-size: 14px;
+      pointer-events: none;
+    }
+  </style>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <div id="instructions">
+    AR Cadaver Visualization<br>
+    Move your phone slowly to find a surface.
+    Tap to place the object.
+  </div>
+
+  <div id="status">Press START AR to begin.</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+    const status = document.getElementById('status');
+
+    // Create the 3D scene.
+    const scene = new THREE.Scene();
+
+    // Set up the camera.
+    const camera = new THREE.PerspectiveCamera(
+      70,
+      window.innerWidth / window.innerHeight,
+      0.01,
+      20
+    );
+
+    // Create the renderer.
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true
+    });
+
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+
+    document.body.appendChild(renderer.domElement);
+
+    // Add light so the 3D object is visible.
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 2));
+
+    const light = new THREE.DirectionalLight(0xffffff, 2);
+    light.position.set(1, 3, 2);
+    scene.add(light);
+
+    // Create a green ring showing where a surface was detected.
+    const reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.08, 0.12, 32),
+      new THREE.MeshBasicMaterial({ color: 0x00ff66 })
+    );
+
+    reticle.rotation.x = -Math.PI / 2;
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    // Create a temporary cube to test placement.
+    const cube = new THREE.Mesh(
+      new THREE.BoxGeometry(0.15, 0.15, 0.15),
+      new THREE.MeshStandardMaterial({ color: 0xe8b923 })
+    );
+
+    cube.visible = false;
+    scene.add(cube);
+
+    let hitTestSource = null;
+    let hitTestRequested = false;
+    let surfaceFound = false;
+
+    // Start an AR session with real-world hit testing.
+    document.body.appendChild(
+      ARButton.createButton(renderer, {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: ['dom-overlay'],
+        domOverlay: { root: document.body }
+      })
+    );
+
+    renderer.xr.addEventListener('sessionstart', () => {
+      status.textContent = 'Move your phone slowly to find a surface.';
+      hitTestSource = null;
+      hitTestRequested = false;
+      surfaceFound = false;
+    });
+
+    renderer.xr.addEventListener('sessionend', () => {
+      status.textContent = 'AR ended. Press START AR to try again.';
+      reticle.visible = false;
+      hitTestSource = null;
+      hitTestRequested = false;
+    });
+
+    // Tapping the screen places the cube at the detected surface.
+    renderer.xr.addEventListener('sessionstart', () => {
+      const session = renderer.xr.getSession();
+
+      session.addEventListener('select', () => {
+        if (!reticle.visible) {
+          status.textContent = 'No surface found yet. Move the phone slowly.';
+          return;
+        }
+
+        cube.position.setFromMatrixPosition(reticle.matrix);
+        cube.quaternion.setFromRotationMatrix(reticle.matrix);
+        cube.visible = true;
+
+        status.textContent = 'Object placed! Tap another surface to move it.';
+      });
+    });
+
+    // Update the surface indicator every frame.
+    renderer.setAnimationLoop((timestamp, frame) => {
+      if (frame) {
+        const session = renderer.xr.getSession();
+
+        if (!hitTestRequested) {
+          hitTestRequested = true;
+
+          session.requestReferenceSpace('viewer')
+            .then((viewerSpace) => {
+              return session.requestHitTestSource({
+                space: viewerSpace
+              });
+            })
+            .then((source) => {
+              hitTestSource = source;
+            })
+            .catch((error) => {
+              status.textContent = 'Hit testing failed: ' + error.message;
+            });
+        }
+
+        if (hitTestSource) {
+          const referenceSpace = renderer.xr.getReferenceSpace();
+          const results = frame.getHitTestResults(hitTestSource);
+
+          if (results.length > 0) {
+            const pose = results[0].getPose(referenceSpace);
+
+            reticle.visible = true;
+            reticle.matrix.fromArray(pose.transform.matrix);
+
+            if (!surfaceFound) {
+              status.textContent = 'Surface found! Tap to place the object.';
+              surfaceFound = true;
+            }
+          } else {
+            reticle.visible = false;
+            surfaceFound = false;
+            status.textContent = 'Move your phone slowly to find a surface.';
+          }
+        }
+      }
+
+      renderer.render(scene, camera);
+    });
+
+    // Keep the display fitted to the browser window.
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
